@@ -1,14 +1,10 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, abort
 import mysql.connector
+from mysql.connector import Error
 
 app = Flask(__name__)
 app.secret_key = "landlord-management-secret"
-
-
-# ---------------------------------------------------------
-# Database configuration
-# ---------------------------------------------------------
-
+# Update these settings for your MySQL installation.
 DB_CONFIG = {
     "host": "mysql",
     "port": 3306,  # Internal Docker port, NOT 3307
@@ -17,303 +13,520 @@ DB_CONFIG = {
     "database": "landlorddb"
 }
 
+# Table and column names are deliberately defined here (whitelisted).
+# The boolean-like VARCHAR columns are stored as "Yes" / "No".
+TABLES = {
+    "Houses": {
+        "primary_key": "Address",
+        "fields": [
+            ("Address", "text", True),
+            ("Apartment_count", "number", False),
+            ("Property_value", "number", False),
+        ],
+        "booleans": [],
+    },
+    "Apartments": {
+        "primary_key": "Apartment_ID",
+        "fields": [
+            ("Apartment_ID", "number", True),
+            ("address", "text", False),
+            ("number", "number", False),
+            ("size", "number", False),
+            ("room_count", "number", False),
+            ("has_parking_lot", "boolean", False),
+        ],
+        "booleans": ["has_parking_lot"],
+    },
+    "Tennents": {
+        "primary_key": "Tennent_ID",
+        "fields": [
+            ("Tennent_ID", "number", True),
+            ("surname", "text", False),
+            ("name", "text", False),
+            ("warning_count", "number", False),
+        ],
+        "booleans": [],
+    },
+    "Contractors": {
+        "primary_key": "Contract_ID",
+        "fields": [
+            ("Contract_ID", "number", True),
+            ("con_surname", "text", False),
+            ("con_name", "text", False),
+            ("address", "text", False),
+            ("profession", "text", False),
+        ],
+        "booleans": [],
+    },
+    "Leases": {
+        "primary_key": "Lease_ID",
+        "fields": [
+            ("Lease_ID", "number", True),
+            ("Apartment_ID", "number", False),
+            ("tennent_ID", "number", False),
+            ("Validation_date", "date", False),
+            ("rent", "number", False),
+            ("utilities", "number", False),
+            ("termination", "date", False),
+        ],
+        "booleans": [],
+    },
+    "Warnings": {
+        "primary_key": "Warning_ID",
+        "fields": [
+            ("Warning_ID", "number", True),
+            ("lease_ID", "number", False),
+            ("date", "date", False),
+            ("fine_amount", "number", False),
+            ("is_paid", "boolean", False),
+        ],
+        "booleans": ["is_paid"],
+    },
+    "Repairs": {
+        "primary_key": "repair_ID",
+        "fields": [
+            ("repair_ID", "number", True),
+            ("apartment_ID", "number", False),
+            ("Contract_ID", "number", False),
+            ("issue_description", "text", False),
+            ("repair_cost", "number", False),
+            ("completion_status", "boolean", False),
+        ],
+        "booleans": ["completion_status"],
+    },
+}
+
+#Function for Query 1:
+def get_total_property_value():
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute("CALL get_total_value()")
+
+        row = cursor.fetchone()
+        return row["total"] 
+
+    finally:
+        cursor.close()
+        connection.close()
 
 def get_connection():
     return mysql.connector.connect(**DB_CONFIG)
 
 
-# ---------------------------------------------------------
-# Database initialization
-# ---------------------------------------------------------
+def get_table_or_404(table_name):
+    if table_name not in TABLES:
+        abort(404)
+    return TABLES[table_name]
 
-def initialize_database():
+
+def quote_identifier(identifier):
+    # Only identifiers from the TABLES whitelist are passed here.
+    return "`" + identifier.replace("`", "``") + "`"
+
+
+@app.route("/")
+def dashboard():
+    return render_template("dashboard.html", tables=TABLES)
+
+
+@app.route("/table/<table_name>")
+def show_table(table_name):
+    config = get_table_or_404(table_name)
+    columns = [field[0] for field in config["fields"]]
+    search = request.args.get("q", "").strip()
+
+    sql = "SELECT " + ", ".join(quote_identifier(c) for c in columns)
+    sql += " FROM " + quote_identifier(table_name)
+    params = []
+
+    if search:
+        conditions = [
+            "CAST(" + quote_identifier(c) + " AS CHAR) LIKE %s"
+            for c in columns
+        ]
+        sql += " WHERE " + " OR ".join(conditions)
+        params = [f"%{search}%"] * len(columns)
+
+    sql += " ORDER BY " + quote_identifier(config["primary_key"])
+
     connection = get_connection()
-    cursor = connection.cursor()
-
     try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tenants (
-                tenant_id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(100) NOT NULL
-            )
-        """)
-        connection.commit()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
     finally:
         cursor.close()
         connection.close()
+    
+    property_value = None
+
+    if table_name == "Houses":
+        property_value = get_total_property_value()
+
+    return render_template(
+        "relation.html",
+        table_name=table_name,
+        config=config,
+        columns=columns,
+        rows=rows,
+        search=search,
+        property_value=property_value
+    )
 
 
-# ---------------------------------------------------------
-# HTML template
-# ---------------------------------------------------------
+@app.route("/table/<table_name>/add", methods=["POST"])
+def add_record(table_name):
+    config = get_table_or_404(table_name)
+    fields = config["fields"]
+    columns = []
+    values = []
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Landlord Management</title>
+    try:
+        for column, field_type, is_primary_key in fields:
+            if field_type == "boolean":
+                value = "Yes" if request.form.get(column) == "on" else "No"
+            else:
+                value = request.form.get(column, "").strip()
+                if value == "":
+                    value = None
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f6f9;
-            margin: 0;
-            padding: 40px;
-        }
+            if is_primary_key and value is None:
+                raise ValueError(f"{column} is required.")
 
-        .container {
-            max-width: 800px;
-            margin: auto;
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        }
+            columns.append(column)
+            values.append(value)
 
-        h1 {
-            margin-top: 0;
-            margin-bottom: 25px;
-        }
+        sql = (
+            "INSERT INTO " + quote_identifier(table_name)
+            + " (" + ", ".join(quote_identifier(c) for c in columns) + ")"
+            + " VALUES (" + ", ".join(["%s"] * len(values)) + ")"
+        )
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
+        connection = get_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(sql, values)
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
 
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
+        flash("Record added successfully.", "success")
 
-        th {
-            background-color: #f0f2f5;
-        }
+    except ValueError as exc:
+        flash(str(exc), "error")
+    except Error as exc:
+        flash(f"Could not add record: {exc}", "error")
 
-        .actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        input {
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            flex: 1;
-        }
-
-        button {
-            padding: 10px 16px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .add-button {
-            background-color: #2563eb;
-            color: white;
-        }
-
-        .remove-button {
-            background-color: #dc2626;
-            color: white;
-        }
-
-        .refresh-button {
-            background-color: #64748b;
-            color: white;
-        }
-
-        .message {
-            padding: 10px;
-            margin-bottom: 15px;
-            border-radius: 5px;
-            background-color: #e0f2fe;
-        }
-
-        .empty {
-            color: #777;
-            text-align: center;
-            padding: 20px;
-        }
-    </style>
-</head>
-
-<body>
-    <div class="container">
-
-        <h1>Landlord Management</h1>
-
-        {% with messages = get_flashed_messages() %}
-            {% for message in messages %}
-                <div class="message">{{ message }}</div>
-            {% endfor %}
-        {% endwith %}
-
-        <h2>Tenants</h2>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Tenant ID</th>
-                    <th>Tenant Name</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-
-            <tbody>
-                {% for tenant in tenants %}
-                    <tr>
-                        <td>{{ tenant[0] }}</td>
-                        <td>{{ tenant[1] }}</td>
-                        <td>
-                            <form method="POST"
-                                  action="{{ url_for('remove_tenant', tenant_id=tenant[0]) }}"
-                                  onsubmit="return confirm('Do you really want to remove {{ tenant[1] }}?');">
-                                <button class="remove-button" type="submit">
-                                    Remove
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr>
-                        <td colspan="3" class="empty">
-                            No tenants found.
-                        </td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-
-        <h2>Add Tenant</h2>
-
-        <form method="POST" action="{{ url_for('add_tenant') }}" class="actions">
-            <input
-                type="text"
-                name="name"
-                placeholder="Enter tenant name"
-                maxlength="100"
-                required
-            >
-
-            <button class="add-button" type="submit">
-                + Add Tenant
-            </button>
-        </form>
-
-        <div class="actions">
-            <form method="GET" action="{{ url_for('index') }}">
-                <button class="refresh-button" type="submit">
-                    Refresh
-                </button>
-            </form>
-        </div>
-
-    </div>
-</body>
-</html>
-"""
+    return redirect(url_for("show_table", table_name=table_name))
 
 
-# ---------------------------------------------------------
-# Routes
-# ---------------------------------------------------------
+@app.route("/table/<table_name>/delete", methods=["POST"])
+def delete_records(table_name):
+    config = get_table_or_404(table_name)
+    primary_key = config["primary_key"]
+    selected_ids = request.form.getlist("selected_ids")
 
-@app.route("/")
-def index():
-    tenants = []
+    if not selected_ids:
+        flash("Select at least one record to delete.", "error")
+        return redirect(url_for("show_table", table_name=table_name))
+
+    placeholders = ", ".join(["%s"] * len(selected_ids))
+    sql = (
+        "DELETE FROM " + quote_identifier(table_name)
+        + " WHERE " + quote_identifier(primary_key)
+        + " IN (" + placeholders + ")"
+    )
 
     try:
         connection = get_connection()
-        cursor = connection.cursor()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(sql, selected_ids)
+            deleted_count = cursor.rowcount
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
 
-        cursor.execute(
-            "SELECT tenant_id, name FROM tenants ORDER BY tenant_id"
-        )
+        flash(f"Deleted {deleted_count} record(s).", "success")
+    except Error as exc:
+        flash(f"Could not delete record(s): {exc}", "error")
 
-        tenants = cursor.fetchall()
+    return redirect(url_for("show_table", table_name=table_name))
 
-        cursor.close()
-        connection.close()
+@app.route("/table/houses/check", methods=["POST"])
+def check_invest():
 
-    except mysql.connector.Error as error:
-        flash(f"Database error: {error}")
-
-    return render_template_string(HTML_TEMPLATE, tenants=tenants)
-
-
-@app.route("/add", methods=["POST"])
-def add_tenant():
-    name = request.form.get("name", "").strip()
-
-    if not name:
-        flash("Tenant name cannot be empty.")
-        return redirect(url_for("index"))
+    connection = None
+    cursor = None
 
     try:
         connection = get_connection()
-        cursor = connection.cursor()
+        cursor = connection.cursor(dictionary=True)
 
         cursor.execute(
-            "INSERT INTO tenants (name) VALUES (%s)",
-            (name,)
+            "CALL get_critical_houses",
         )
 
-        connection.commit()
+        rows = cursor.fetchall()
+        columns = cursor.column_names
 
-        cursor.close()
-        connection.close()
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
 
-        flash(f"Tenant '{name}' added successfully.")
+    except Error as exc:
+        flash(f"Could not retrieve investment check: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Houses"))
 
-    except mysql.connector.Error as error:
-        flash(f"Database error: {error}")
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
 
-    return redirect(url_for("index"))
+@app.route("/table/houses/earnings", methods=["POST"])
+def check_house():
 
+    address = request.form.get("address")
 
-@app.route("/remove/<int:tenant_id>", methods=["POST"])
-def remove_tenant(tenant_id):
+    connection = None
+    cursor = None
+
     try:
         connection = get_connection()
-        cursor = connection.cursor()
+        cursor = connection.cursor(dictionary=True)
 
         cursor.execute(
-            "DELETE FROM tenants WHERE tenant_id = %s",
-            (tenant_id,)
+            "CALL check_house(%s)",
+            (address,) 
         )
 
-        connection.commit()
+        rows = cursor.fetchall()
+        columns = cursor.column_names
 
-        if cursor.rowcount > 0:
-            flash("Tenant removed successfully.")
-        else:
-            flash("Tenant not found.")
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
 
-        cursor.close()
-        connection.close()
+    except Error as exc:
+        flash(f"Could not retrieve earnings: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Houses"))
 
-    except mysql.connector.Error as error:
-        flash(f"Database error: {error}")
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
 
-    return redirect(url_for("index"))
+@app.route("/table/tennents/warninginfo", methods=["POST"])
+def new_warning():
 
+    connection = None
+    cursor = None
 
-# ---------------------------------------------------------
-# Start application
-# ---------------------------------------------------------
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL new_warning_letter"
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve warning infos: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Tennents"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.route("/table/apartments/free", methods=["POST"])
+def free_apartments():
+    size = request.form.get("size")
+    rooms = request.form.get("rooms")
+    parking = "Yes" if request.form.get("parking") == "on" else "No"
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL get_apartments(%s, %s, %s)",
+            (size, rooms, parking)
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve free apartments: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Apartments"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.route("/table/apartments/broken", methods=["POST"])
+def broken_apartments():
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL show_broken_apartments",
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve broken apartments: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Apartments"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.route("/table/leases/critical-leases", methods=["POST"])
+def critical_leases():
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL get_critical_lease",
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve critical leases: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Leases"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.route("/table/contractors/lessjobs", methods=["POST"])
+def less_jobs():
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL get_less_jobs",
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve contractors with less jobs: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Contractors"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.route("/table/repairs/prioritize", methods=["POST"])
+def prio_repairs():
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "CALL prio_repairs",
+        )
+
+        rows = cursor.fetchall()
+        columns = cursor.column_names
+
+        return render_template(
+            "relation.html",
+            rows=rows,
+            columns=columns
+        )
+
+    except Error as exc:
+        flash(f"Could not retrieve prioritize repairs: {exc}", "error")
+        return redirect(url_for("show_table", table_name="Repairs"))
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
 
 if __name__ == "__main__":
-    initialize_database()
-
-    app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
-    )
+    app.run(host="0.0.0.0", port=5000, debug=True)

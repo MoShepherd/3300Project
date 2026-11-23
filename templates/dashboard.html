@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property Management Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="container">
+        <header class="page-header">
+            <div>
+                <p class="eyebrow">PROPERTY MANAGEMENT</p>
+                <h1>Database Dashboard</h1>
+                <p class="muted">Choose a relation to view and manage its records.</p>
+            </div>
+        </header>
+
+        <section class="table-grid">
+            {% for table_name in tables %}
+                <a class="table-card" href="{{ url_for('show_table', table_name=table_name) }}">
+                    <span class="card-icon">▦</span>
+                    <span class="card-title">{{ table_name }}</span>
+                    <span class="card-description">Open relation <span aria-hidden="true">→</span></span>
+                </a>
+            {% endfor %}
+        </section>
+    </main>
+</body>
+</html>

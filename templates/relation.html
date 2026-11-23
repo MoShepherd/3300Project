@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ table_name }} | Property Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="container">
+        <a class="back-link" href="{{ url_for('dashboard') }}">← Dashboard</a>
+
+        <header class="relation-header">
+            <div>
+                <p class="eyebrow">DATABASE RELATION</p>
+                <h1>{{ table_name }}</h1>
+                <p class="muted">{{ rows|length }} record(s) displayed</p>
+            </div>
+            {% if table_name == "Houses" %}
+            <form method="POST" action="{{ url_for('check_invest') }}">
+                <button type="submit"
+                        class="button-contractors">
+                    Investment Check
+                </button>
+            </form>
+            <button type="button"
+                    class="button-free-apartments"
+                    onclick="document.getElementById('checkHouseDialog').showModal()">
+                Check House 
+            </button>
+            {% endif %}
+            {% if table_name == "Tennents" %}
+            <form method="POST" action="{{ url_for('new_warning') }}">
+                <button type="submit"
+                        class="button-contractors">
+                    New Warning Letter
+                </button>
+            </form>
+            {% endif %}
+            {% if table_name == "Apartments" %}
+            <button type="button"
+                    class="button-free-apartments"
+                    onclick="document.getElementById('freeApartmentsDialog').showModal()">
+                Free Apartments
+            </button>
+            <form method="POST" action="{{url_for('broken_apartments')}}">
+                <button type="submit"
+                    class="button-broken-apartments">
+                Broken Apartments
+                </button>
+            </form>
+            {% endif %}
+            {% if table_name == "Leases" %}
+            <form method="POST" action="{{ url_for('critical_leases') }}">
+                <button type="submit"
+                        class="button-critical">
+                    Critical Leases
+                </button>
+            </form>
+            {% endif %}
+            {% if table_name == "Contractors" %}
+            <form method="POST" action="{{ url_for('less_jobs') }}">
+                <button type="submit"
+                        class="button-contractors">
+                    Less Jobs
+                </button>
+            </form>
+            {% endif %}
+            {% if table_name == "Repairs" %}
+            <form method="POST" action="{{ url_for('prio_repairs') }}">
+                <button type="submit"
+                        class="button-contractors">
+                    Prioritize Repairs
+                </button>
+            </form>
+            {% endif %}
+            <button class="button button-primary" type="button" onclick="openAddDialog()">＋ Add record</button>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <section class="panel">
+            
+            {% if table_name == "Houses" %}
+            <div class="property-value">
+                <span>Property Value:</span>
+                    <strong>
+                         ${{ "{:,.2f}".format(property_value) }}
+                    </strong>
+            </div>
+            {% endif %}
+            
+            <form class="toolbar" method="GET" action="{{ url_for('show_table', table_name=table_name) }}">
+                <input type="search" name="q" value="{{ search }}" placeholder="Search this relation..." aria-label="Search records">
+                <button class="button button-secondary" type="submit">Search</button>
+                {% if search %}
+                    <a class="clear-link" href="{{ url_for('show_table', table_name=table_name) }}">Clear</a>
+                {% endif %}
+            </form>
+
+            <form method="POST" action="{{ url_for('delete_records', table_name=table_name) }}"
+                  onsubmit="return confirmDelete();">
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="select-column">Select</th>
+                                {% for column in columns %}
+                                    <th>{{ column }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                                <tr>
+                                    <td class="select-column">
+                                        <input type="checkbox" name="selected_ids"
+                                               value="{{ row[config.primary_key] }}"
+                                               aria-label="Select record {{ row[config.primary_key] }}">
+                                    </td>
+                                    {% for column in columns %}
+                                        <td>
+                                            {% if column in config.booleans %}
+                                                <input type="checkbox" disabled
+                                                    {% if row[column]|string|lower in ['yes', 'true', '1'] %}checked{% endif %}
+                                                    aria-label="{{ column }}">
+                                            {% elif row[column] is none %}
+                                                <span class="null-value">NULL</span>
+                                            {% else %}
+                                                {{ row[column] }}
+                                            {% endif %}
+                                        </td>
+                                    {% endfor %}
+                                </tr>
+                            {% else %}
+                                <tr>
+                                    <td class="empty-state" colspan="{{ columns|length + 1 }}">
+                                        No records found.
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="table-footer">
+                    <span class="muted">Select one or more rows to delete them.</span>
+                    <button class="button button-danger" type="submit">Delete selected</button>
+                </div>
+            </form>
+        </section>
+    </main>
+
+    <dialog id="checkHouseDialog">
+        <form method="POST" action="{{ url_for('check_house') }}">
+            <h2>Check earnings of one house</h2>
+        
+            <label for="critical_address">House address</label>
+            <input type="text"
+                   id="critical_address"
+                   name="address"
+                   maxlength="20"
+                   >
+        
+            <div class="dialog-buttons">
+                <button type="button"
+                        onclick="document.getElementById('checkHouseDialog').close()">
+                    Cancel
+                </button>
+            
+                <button type="submit">
+                    Search
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="freeApartmentsDialog">
+        <form method="POST" action="{{ url_for('free_apartments') }}">
+            <h2>Find Free Apartments</h2>
+        
+            <label for="size">Maximum size (m²)</label>
+            <input type="number"
+                   id="size"
+                   name="size"
+                   min="1"
+                   max="999"
+                   required>
+        
+            <label for="rooms">Maximum room count</label>
+            <input type="number"
+                   id="rooms"
+                   name="rooms"
+                   min="1"
+                   max="999"
+                   required>
+        
+            <label class="parking-option">
+                <input type="checkbox" name="parking">
+                Parking required
+            </label>
+        
+            <div class="dialog-buttons">
+                <button type="button"
+                        onclick="document.getElementById('freeApartmentsDialog').close()">
+                    Cancel
+                </button>
+            
+                <button type="submit">
+                    Search
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="criticalLeaseDialog">
+        <form method="POST" action="{{ url_for('critical_leases') }}">
+            <h2>Find Critical Leases</h2>
+
+            <label for="critical_address">House address</label>
+            <input type="text"
+                   id="critical_address"
+                   name="address"
+                   maxlength="20"
+                   >
+
+            <div class="dialog-buttons">
+                <button type="button"
+                        onclick="document.getElementById('criticalLeaseDialog').close()">
+                    Cancel
+                </button>
+
+                <button type="submit" class="button-critical">
+                    Search
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="addDialog" class="add-dialog">
+        <form method="POST" action="{{ url_for('add_record', table_name=table_name) }}">
+            <div class="dialog-header">
+                <div>
+                    <p class="eyebrow">NEW ENTRY</p>
+                    <h2>Add to {{ table_name }}</h2>
+                </div>
+                <button class="close-button" type="button" onclick="closeAddDialog()" aria-label="Close">×</button>
+            </div>
+
+            <div class="form-fields">
+                {% for column, field_type, is_primary_key in config.fields %}
+                    <label class="field">
+                        <span>{{ column }}{% if is_primary_key %} <span class="required">*</span>{% endif %}</span>
+                        {% if field_type == "boolean" %}
+                            <span class="checkbox-field">
+                                <input type="checkbox" name="{{ column }}">
+                                Yes
+                            </span>
+                        {% elif field_type == "date" %}
+                            <input type="date" name="{{ column }}">
+                        {% elif field_type == "number" %}
+                            <input type="number" step="any" name="{{ column }}"
+                                   {% if is_primary_key %}required{% endif %}>
+                        {% else %}
+                            <input type="text" name="{{ column }}"
+                                   {% if is_primary_key %}required{% endif %}>
+                        {% endif %}
+                    </label>
+                {% endfor %}
+            </div>
+
+            <p class="form-hint">Fields marked with * are required. Leave optional fields empty to store NULL.</p>
+            <div class="dialog-actions">
+                <button class="button button-secondary" type="button" onclick="closeAddDialog()">Cancel</button>
+                <button class="button button-primary" type="submit">Add record</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script>
+        const addDialog = document.getElementById("addDialog");
+
+        function openAddDialog() {
+            addDialog.showModal();
+        }
+
+        function closeAddDialog() {
+            addDialog.close();
+        }
+
+        function confirmDelete() {
+            const selected = document.querySelectorAll('input[name="selected_ids"]:checked');
+            if (selected.length === 0) {
+                alert("Select at least one record first.");
+                return false;
+            }
+            return confirm(`Delete ${selected.length} selected record(s)? This cannot be undone.`);
+        }
+    </script>
+</body>
+</html>
