@@ -1,6 +1,13 @@
 CREATE DATABASE IF NOT EXISTS landlorddb;
 USE landlorddb;
 ############CREATES################
+create table Users (
+    User_ID int auto_increment primary key,
+    username varchar(50) not null unique,
+    password_hash varchar(255) not null,
+    role ENUM('owner', 'employe') not null default 'employe'
+);
+
 CREATE TABLE Houses(
 Address varchar(20) PRIMARY KEY,
 Apartment_count numeric(3,0),
@@ -66,6 +73,12 @@ FOREIGN KEY (Contract_ID) REFERENCES Contractors(Contract_ID)
 
 
 ###################INSERTS#############
+insert into Users
+(User_ID, username, password_hash, role)
+VALUES
+('1', 'Moritz', 'abcd', 'owner'),
+('2', 'Sam', '1234', 'employe');
+
 INSERT into Houses
 (Address, Apartment_count, Property_value)
 VALUES

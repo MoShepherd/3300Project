@@ -1,4 +1,16 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, abort
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+    abort
+)
+
+from werkzeug.security import check_password_hash
+from functools import wraps
 import mysql.connector
 from mysql.connector import Error
 
@@ -125,13 +137,68 @@ def quote_identifier(identifier):
     # Only identifiers from the TABLES whitelist are passed here.
     return "`" + identifier.replace("`", "``") + "`"
 
+def login_required(f):
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
 
 @app.route("/")
+@login_required
 def dashboard():
     return render_template("dashboard.html", tables=TABLES)
 
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(url_for("login"))
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+
+    if request.method == "POST":
+
+        username = request.form["username"]
+        password = request.form["password"]
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT User_ID, username, password_hash, role
+            FROM Users
+            WHERE username = %s
+        """, (username,))
+
+        user = cursor.fetchone()
+
+        cursor.close()
+        connection.close()
+
+        if user and user["password_hash"] == password:
+            session.clear()
+
+            session["user_id"] = user["User_ID"]
+            session["username"] = user["username"]
+            session["role"] = user["role"]
+
+            return redirect(url_for("dashboard"))
+
+        flash("Invalid username or password.", "error")
+
+    return render_template("login.html")
 
 @app.route("/table/<table_name>")
+@login_required
 def show_table(table_name):
     config = get_table_or_404(table_name)
     columns = [field[0] for field in config["fields"]]
@@ -177,6 +244,7 @@ def show_table(table_name):
 
 
 @app.route("/table/<table_name>/add", methods=["POST"])
+@login_required
 def add_record(table_name):
     config = get_table_or_404(table_name)
     fields = config["fields"]
@@ -224,6 +292,7 @@ def add_record(table_name):
 
 
 @app.route("/table/<table_name>/delete", methods=["POST"])
+@login_required
 def delete_records(table_name):
     config = get_table_or_404(table_name)
     primary_key = config["primary_key"]
@@ -258,6 +327,7 @@ def delete_records(table_name):
     return redirect(url_for("show_table", table_name=table_name))
 
 @app.route("/table/houses/check", methods=["POST"])
+@login_required
 def check_invest():
 
     connection = None
@@ -291,6 +361,7 @@ def check_invest():
             connection.close()
 
 @app.route("/table/houses/earnings", methods=["POST"])
+@login_required
 def check_house():
 
     address = request.form.get("address")
@@ -327,6 +398,7 @@ def check_house():
             connection.close()
 
 @app.route("/table/tennents/warninginfo", methods=["POST"])
+@login_required
 def new_warning():
 
     connection = None
@@ -360,6 +432,7 @@ def new_warning():
             connection.close()
 
 @app.route("/table/apartments/free", methods=["POST"])
+@login_required
 def free_apartments():
     size = request.form.get("size")
     rooms = request.form.get("rooms")
@@ -397,6 +470,7 @@ def free_apartments():
             connection.close()
 
 @app.route("/table/apartments/broken", methods=["POST"])
+@login_required
 def broken_apartments():
 
     connection = None
@@ -430,6 +504,7 @@ def broken_apartments():
             connection.close()
 
 @app.route("/table/leases/critical-leases", methods=["POST"])
+@login_required
 def critical_leases():
 
     connection = None
@@ -463,6 +538,7 @@ def critical_leases():
             connection.close()
 
 @app.route("/table/contractors/lessjobs", methods=["POST"])
+@login_required
 def less_jobs():
 
     connection = None
@@ -496,6 +572,7 @@ def less_jobs():
             connection.close()
 
 @app.route("/table/repairs/prioritize", methods=["POST"])
+@login_required
 def prio_repairs():
 
     connection = None

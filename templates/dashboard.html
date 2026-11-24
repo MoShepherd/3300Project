@@ -14,15 +14,33 @@
                 <h1>Database Dashboard</h1>
                 <p class="muted">Choose a relation to view and manage its records.</p>
             </div>
+            <div class="user-info">
+                Logged in as {{ session.username }}
+
+                {% if session.role == 'root' %}
+                    <span class="role">Administrator</span>
+                {% endif %}
+
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
         </header>
 
         <section class="table-grid">
             {% for table_name in tables %}
+                {% if session.get("role") == "owner" and table_name == "Houses" %}
+                    <a class="table-card" href="{{ url_for('show_table', table_name=table_name) }}">
+                        <span class="card-icon">▦</span>
+                        <span class="card-title">{{ table_name }}</span>
+                        <span class="card-description">Open relation <span aria-hidden="true">→</span></span>
+                    </a>
+                {% endif %}
+                {% if table_name != "Houses" %}
                 <a class="table-card" href="{{ url_for('show_table', table_name=table_name) }}">
                     <span class="card-icon">▦</span>
                     <span class="card-title">{{ table_name }}</span>
                     <span class="card-description">Open relation <span aria-hidden="true">→</span></span>
                 </a>
+                {% endif %}
             {% endfor %}
         </section>
     </main>
